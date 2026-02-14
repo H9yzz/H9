@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+{% block title %}Miner - H9{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>⛏️ Mining Control</h2>
+    <div class="mining-status">
+        <span id="miningStatus" class="status {% if mining_stats.is_mining %}active{% endif %}">
+            {% if mining_stats.is_mining %}🟢 Mining Active{% else %}🔴 Mining Stopped{% endif %}
+        </span>
+        <div class="mining-timer" id="miningTimer" style="display: none;">
+            <span>⏱️ Mining Time: </span><span id="timerDisplay">00:00</span>
+        </div>
+    </div>
+</div>
+
+<div class="grid">
+    <div class="card">
+        <div class="card-header">
+            <h3>Mining Controls</h3>
+        </div>
+        <div class="card-body">
+            <div class="mining-controls">
+                <button id="startMining" class="btn btn-success" {% if mining_stats.is_mining %}disabled{% endif %}>▶️
+                    Start Mining</button>
+                <button id="stopMining" class="btn btn-danger" {% if not mining_stats.is_mining %}disabled{% endif %}>⏹️
+                    Stop Mining</button>
+                <button id="refreshStats" class="btn btn-secondary">🔄 Refresh</button>
+            </div>
+            <div class="mining-info">
+                <div class="info-row"><label>Mining Address:</label><span class="address">{{ mining_stats.wallet_address
+                        or 'No wallet selected' }}</span></div>
+                <div class="info-row"><label>Current Difficulty:</label><span id="currentDifficulty">{{
+                        mining_stats.difficulty }}</span></div>
+                <div class="info-row"><label>Estimated Block Time:</label><span
+                        id="estimatedBlockTime">Calculating...</span></div>
+                <div class="info-row"><label>Mining Efficiency:</label><span id="miningEfficiency">0%</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3>Mining Statistics</h3>
+        </div>
+        <div class="card-body">
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="hashRate">{{ "%.2f"|format(mining_stats.hash_rate) }}</div>
+                    <div class="stat-label">Hash Rate (H/s)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="blocksMinedCount">{{ mining_stats.blocks_mined }}</div>
+                    <div class="stat-label">Blocks Mined</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalRewards">{{ "%.2f"|format(mining_stats.blocks_mined * 1.0) }}</div>
+                    <div class="stat-label">Total Rewards (H9)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="walletBalance">{{ "%.8f"|format(balance) if balance else "0.00000000" }}
+                    </div>
+                    <div class="stat-label">Wallet Balance (H9)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3>Mining Performance Graph</h3>
+    </div>
+    <div class="card-body">
+        <div class="performance-chart">
+            <canvas id="hashRateChart" width="800" height="300"></canvas>
+        </div>
+        <div class="chart-controls">
+            <button id="resetChart" class="btn btn-sm btn-secondary">Reset Chart</button>
+            <span class="chart-info">Real-time hash rate monitoring (last 30 data points)</span>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3>Network Status</h3>
+    </div>
+    <div class="card-body">
+        <div class="network-stats">
+            <div class="info-row">
+                <label>Node Status:</label>
+                <span id="nodeStatus">Checking...</span>
+            </div>
+            <div class="info-row">
+                <label>Connected Peers:</label>
+                <span id="peerCount">0</span>
+            </div>
+            <div class="info-row">
+                <label>Blockchain Height:</label>
+                <span id="blockHeight">0</span>
+            </div>
+            <div class="info-row">
+                <label>Pending Transactions:</label>
+                <span id="pendingTxCount">0</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3>Recent Mining Activity</h3>
+    </div>
+    <div class="card-body">
+        <div id="miningActivity">
+            <p>No recent mining activity...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    let hashRateHistory = [];
+    let miningStartTime = null;
+    let miningTimer = null;
+    let chart = null;
+    const socket = io();
+
+    // Initialize Chart.js
+    function initializeChart() {
+        const ctx = document.getElementById('hashRateChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Hash Rate (H/s)',
+                    data: [],
+                    borderColor: '#00ff88',
+                    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#ffffff'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#ffffff',
+                            maxTicksLimit: 10
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#ffffff'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Update chart with new data
+    function updateChart(hashRate) {
+        if (!chart) return;
+
+        const now = new Date();
+        const timeLabel = now.toLocaleTimeString();
+
+        chart.data.labels.push(timeLabel);
+        chart.data.datasets[0].data.push(hashRate);
+
+        // Keep only last 30 data points
+        if (chart.data.labels.length > 30) {
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+        }
+
+        chart.update('none');
+    }
+
+    // Reset chart
+    function resetChart() {
+        if (chart) {
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+        }
+    }
+
+    // Update mining timer
+    function updateMiningTimer() {
+        if (!miningStartTime) return;
+
+        const elapsed = Math.floor((Date.now() - miningStartTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+        document.getElementById('timerDisplay').textContent =
+            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    // Calculate estimated block time
+    function calculateEstimatedBlockTime(hashRate, difficulty) {
+        if (hashRate <= 0) return "∞";
+        const estimatedSeconds = (difficulty * 1000000) / hashRate;
+        if (estimatedSeconds < 60) {
+            return `${estimatedSeconds.toFixed(1)}s`;
+        } else if (estimatedSeconds < 3600) {
+            return `${(estimatedSeconds / 60).toFixed(1)}m`;
+        } else {
+            return `${(estimatedSeconds / 3600).toFixed(1)}h`;
+        }
+    }
+
+    // Calculate mining efficiency
+    function calculateMiningEfficiency(hashRate, difficulty) {
+        if (difficulty <= 0) return 100;
+        const baseEfficiency = (hashRate / (difficulty * 1000)) * 100;
+        return Math.min(100, Math.max(0, baseEfficiency));
+    }
+
+    // Socket event handlers
+    socket.on('connect', function () {
+        console.log('Connected to server');
+        document.getElementById('nodeStatus').textContent = '🟢 Connected';
+    });
+
+    socket.on('disconnect', function () {
+        console.log('Disconnected from server');
+        document.getElementById('nodeStatus').textContent = '🔴 Disconnected';
+    });
+
+    socket.on('stats_update', function (data) {
+        console.log('Received stats update:', data);
+
+        const mining = data.mining || {};
+        const blockchain = data.blockchain || {};
+        const wallet = data.wallet || {};
+
+        // Update mining stats
+        document.getElementById('hashRate').innerText = (mining.hash_rate || 0).toFixed(2);
+        document.getElementById('blocksMinedCount').innerText = mining.blocks_mined || 0;
+        document.getElementById('totalRewards').innerText = (mining.total_rewards || 0).toFixed(2);
+        document.getElementById('walletBalance').innerText = (wallet.balance || 0).toFixed(8);
+        document.getElementById('currentDifficulty').innerText = mining.difficulty || 1;
+
+        // Update estimated block time and efficiency
+        const hashRate = mining.hash_rate || 0;
+        const difficulty = mining.difficulty || 1;
+        document.getElementById('estimatedBlockTime').innerText = calculateEstimatedBlockTime(hashRate, difficulty);
+        document.getElementById('miningEfficiency').innerText = `${calculateMiningEfficiency(hashRate, difficulty).toFixed(1)}%`;
+
+        // Update network stats
+        document.getElementById('blockHeight').innerText = blockchain.total_blocks || 0;
+        document.getElementById('pendingTxCount').innerText = blockchain.pending_transactions || 0;
+        document.getElementById('peerCount').innerText = data.node?.peer_count || 0;
+
+        // Update chart
+        updateChart(hashRate);
+
+        // Add mining activity log
+        if (mining.blocks_mined > 0) {
+            addMiningActivity(`Block mined! Reward: ${mining.mining_reward || 1.0} H9`);
+        }
+    });
+
+    // Mining control event handlers
+    document.getElementById('startMining').addEventListener('click', function () {
+        fetch('/api/mining/start', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateMiningStatus(true);
+                    miningStartTime = Date.now();
+                    miningTimer = setInterval(updateMiningTimer, 1000);
+                    document.getElementById('miningTimer').style.display = 'block';
+                    addMiningActivity('Mining started');
+                } else {
+                    alert('Failed to start mining: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error starting mining:', error);
+                alert('Failed to start mining');
+            });
+    });
+
+    document.getElementById('stopMining').addEventListener('click', function () {
+        fetch('/api/mining/stop', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateMiningStatus(false);
+                    if (miningTimer) {
+                        clearInterval(miningTimer);
+                        miningTimer = null;
+                    }
+                    document.getElementById('miningTimer').style.display = 'none';
+                    addMiningActivity('Mining stopped');
+                } else {
+                    alert('Failed to stop mining: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error stopping mining:', error);
+                alert('Failed to stop mining');
+            });
+    });
+
+    document.getElementById('refreshStats').addEventListener('click', function () {
+        fetch('/api/mining/stats')
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    console.error('Error fetching stats:', data.error);
+                    return;
+                }
+
+                document.getElementById('hashRate').innerText = data.hash_rate.toFixed(2);
+                document.getElementById('blocksMinedCount').innerText = data.blocks_mined;
+                document.getElementById('totalRewards').innerText = data.total_rewards.toFixed(2);
+                document.getElementById('currentDifficulty').innerText = data.difficulty;
+                document.getElementById('pendingTxCount').innerText = data.pending_transactions;
+
+                updateChart(data.hash_rate);
+            })
+            .catch(error => {
+                console.error('Error refreshing stats:', error);
+            });
+    });
+
+    document.getElementById('resetChart').addEventListener('click', function () {
+        resetChart();
+        addMiningActivity('Chart reset');
+    });
+
+    function updateMiningStatus(isMining) {
+        const status = document.getElementById('miningStatus');
+        const startBtn = document.getElementById('startMining');
+        const stopBtn = document.getElementById('stopMining');
+
+        if (isMining) {
+            status.textContent = '🟢 Mining Active';
+            status.className = 'status active';
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+        } else {
+            status.textContent = '🔴 Mining Stopped';
+            status.className = 'status';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+    }
+
+    function addMiningActivity(message) {
+        const activityDiv = document.getElementById('miningActivity');
+        const timestamp = new Date().toLocaleTimeString();
+        const activityItem = document.createElement('div');
+        activityItem.className = 'activity-item';
+        activityItem.innerHTML = `<span class="activity-time">${timestamp}</span> <span class="activity-message">${message}</span>`;
+
+        activityDiv.insertBefore(activityItem, activityDiv.firstChild);
+
+        // Keep only last 10 activities
+        const activities = activityDiv.querySelectorAll('.activity-item');
+        if (activities.length > 10) {
+            activities[activities.length - 1].remove();
+        }
+    }
+
+    // Initialize everything when page loads
+    document.addEventListener('DOMContentLoaded', function () {
+        initializeChart();
+
+        // Request initial stats
+        socket.emit('get_stats');
+
+        // Set up periodic stats requests as fallback
+        setInterval(() => {
+            if (socket.connected) {
+                socket.emit('get_stats');
+            }
+        }, 5000);
+    });
+
+    // Handle page visibility changes
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+            socket.emit('get_stats');
+        }
+    });
+</script>
+{% endblock %}
