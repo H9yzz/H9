@@ -96,16 +96,6 @@ run_miner.sh          # Easy mining
 run_server.sh         # Easy web server startup
 ```
 
-## 🔧 Available Wallets
-
-The system comes with pre-existing wallets:
-- Banz
-- Banzz
-- Hayden
-- Hayzz
-- default
-- hayyde
-- test_wallet (created during fixes)
 
 ## 🌐 Web Interface Features
 
