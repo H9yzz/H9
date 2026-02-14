@@ -1,4 +1,4 @@
-# H9 Blockchain - Fixed and Ready to Use 🚀
+# H9 Blockchain
 
 A complete cryptocurrency and blockchain implementation with mining, wallet management, and P2P networking capabilities.
 
